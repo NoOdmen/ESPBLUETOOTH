@@ -1,7 +1,7 @@
 import machine
 import time
 
-led = machine.Pin(23, machine.Pin.OUT)
+led = machine.Pin(2, machine.Pin.OUT)
 
 led.value(1)
 time.sleep(1)

@@ -1,31 +1,83 @@
-from machine import Pin, PWM
+from machine import Pin
 import time
-import math
+import bluetooth
 
-# Используем пин 2, как в оригинальном main.py
-# PWM позволяет плавно изменять яркость светодиода
-led = PWM(Pin(2), freq=1000, duty=0)
+led = Pin(2, Pin.OUT)
+ble = bluetooth.BLE()
 
-def fade_in(led, duration_ms=1000, steps=100):
-    """Плавно зажигает светодиод"""
-    step_delay = duration_ms // steps
-    for i in range(steps + 1):
-        # Вычисляем яркость от 0 до 1023 (максимальная яркость для ESP32)
-        brightness = int((i / steps) * 1023)
-        led.duty(brightness)
-        time.sleep_ms(step_delay)
+name = "Antoha-esp32"
+payload = bytearray([
+    2, 0x01, 0x06,                # flags
+    len(name)+1, 0x09             # complete name
+]) + name.encode()
 
-def fade_out(led, duration_ms=1000, steps=100):
-    """Плавно гасит светодиод"""
-    step_delay = duration_ms // steps
-    for i in range(steps, -1, -1):
-        # Вычисляем яркость от 1023 до 0
-        brightness = int((i / steps) * 1023)
-        led.duty(brightness)
-        time.sleep_ms(step_delay)
+# Флаг подключения
+connected = False
 
-# Бесконечный цикл: плавно зажигаем и плавно гасим
+# Активируем BLE
+ble.active(True)
+
+# Константы событий BLE
+BLE_IRQ_CENTRAL_CONNECT = 1
+BLE_IRQ_CENTRAL_DISCONNECT = 2
+BLE_IRQ_GATTS_WRITE = 3
+
+# Обработчик событий BLE (определяем ДО регистрации)
+def ble_irq(event, data):
+    global connected
+    print(f"BLE Event: {event}")  # Отладочный вывод
+    
+    if event == BLE_IRQ_CENTRAL_CONNECT:
+        # Устройство подключилось
+        connected = True
+        print("Device connected!") # Используем английский для совместимости с mpremote
+        # Останавливаем рекламу при подключении
+        ble.gap_advertise(None)
+    elif event == BLE_IRQ_CENTRAL_DISCONNECT:
+        # Устройство отключилось
+        connected = False
+        print("Device disconnected!")  # Используем английский для совместимости с mpremote
+        # Возобновляем рекламу после отключения
+        advertising_start()
+
+# Настраиваем имя
+ble.config(gap_name=name)
+
+# Регистрируем обработчик событий ПЕРЕД созданием сервисов
+ble.irq(ble_irq)
+
+# UUID для сервиса (создаем простой сервис для возможности подключения)
+SERVICE_UUID = bluetooth.UUID(0x1800)  # Generic Access Profile
+CHAR_UUID = bluetooth.UUID(0x2A00)     # Device Name
+
+# Создаем сервис и характеристику
+services = (
+    (
+        SERVICE_UUID,
+        (
+            (CHAR_UUID, bluetooth.FLAG_READ | bluetooth.FLAG_WRITE),
+        ),
+    ),
+)
+ble.gatts_register_services(services)
+
+def advertising_start():
+    ble.gap_advertise(100000, adv_data=payload)
+    print("Advertising as", name)
+
+# Запускаем рекламу
+advertising_start()
+
+# Основной цикл - мигаем светодиодом при подключении
+print("Main loop started. Waiting for connection...")  # Используем английский для совместимости с mpremote
 while True:
-    fade_in(led, duration_ms=1000)   # Плавно зажигаем за 1 секунду
-    fade_out(led, duration_ms=1000)  # Плавно гасим за 1 секунду
-    time.sleep_ms(200)                # Небольшая пауза между циклами
+    if connected:
+        # Мигаем светодиодом при подключении
+        led.value(1)
+        time.sleep(0.5)
+        led.value(0)
+        time.sleep(0.5)
+    else:
+        # Просто выключаем светодиод, если не подключено
+        led.value(0)
+        time.sleep(0.1)
