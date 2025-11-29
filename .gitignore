@@ -1,1 +1,84 @@
-venv
+# Python
+venv/
+env/
+ENV/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# ESP32 прошивки (обычно большие файлы)
+*.bin
+*.hex
+
+# Вспомогательные скрипты
+*.bat
+*.ps1
+*.sh
+
+# Fritzing проекты
+*.fzz
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Логи и временные файлы
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Git
+*.orig
+
+# МикроPython специфичные
+*.mpy
+.mpy-cross/

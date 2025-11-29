@@ -1,2 +1,4 @@
-adafruit-ampy
+esptool
 rshell
+pyreadline3
+adafruit-ampy
