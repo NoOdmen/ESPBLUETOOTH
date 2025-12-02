@@ -15,15 +15,9 @@ pox_value_handle = None   # 0x2A5F
 
 already_scheduled = False
 
-# Для контроля таймаута подключения
-adv_start_ms = None
-adv_running = False
-halted = False  # <-- режим "всё выключено, жду ресет кнопкой"
-
 # --- Настройки ---
-SLEEP_BETWEEN_MEAS_MS = 60_000   # 60 секунд сна после УСПЕШНОГО обмена
+SLEEP_BETWEEN_MEAS_MS = 60_000   # 60 секунд сна
 ADV_INTERVAL_US       = 100_000  # 100 мс реклама
-CONN_TIMEOUT_MS       = 60_000   # 60 секунд на подключение
 
 
 # ---------- SFLOAT (IEEE 11073) ----------
@@ -39,7 +33,7 @@ def encode_sfloat(value):
 
 
 def ble_irq(event, data):
-    global connected, conn_handle, already_scheduled, adv_running
+    global connected, conn_handle, already_scheduled
 
     print("BLE Event:", event, "data:", data)
 
@@ -48,7 +42,6 @@ def ble_irq(event, data):
         conn_handle = conn_handle_local
         connected = True
         already_scheduled = False
-        adv_running = False
         print("Connected:", conn_handle)
 
         # Планируем отправку после задержки
@@ -61,8 +54,6 @@ def ble_irq(event, data):
 
 
 def start_advertising():
-    global adv_start_ms, adv_running
-
     name = "ESP32-OXI"
     name_bytes = name.encode()
 
@@ -72,33 +63,28 @@ def start_advertising():
     service_uuids_ad = bytearray([
         5,
         0x03,
-        0x0D, 0x18,   # 0x180D
-        0x22, 0x18    # 0x1822
+        0x0D, 0x18,
+        0x22, 0x18
     ])
 
     appearance_ad = bytearray([
         3,
         0x19,
-        0x40, 0x0C    # 0x0C40 = Generic Pulse Oximeter
+        0x40, 0x0C
     ])
 
     adv_payload = flags + name_ad + service_uuids_ad + appearance_ad
     ble.gap_advertise(ADV_INTERVAL_US, adv_payload)
-
-    adv_start_ms = time.ticks_ms()
-    adv_running = True
     print("Advertising as", name)
 
 
 def init_ble():
     global hrs_value_handle, pox_value_handle
-    global connected, conn_handle, already_scheduled, adv_running, halted
+    global connected, conn_handle, already_scheduled
 
     connected = False
     conn_handle = None
     already_scheduled = False
-    adv_running = False
-    halted = False
 
     ble.active(True)
     ble.irq(ble_irq)
@@ -129,15 +115,15 @@ def init_ble():
 
 
 def _scheduled_send(_):
-    """После коннекта: ждём 4 секунды, шлём 1 пакет, disconnect, deep sleep."""
     global already_scheduled
 
     if already_scheduled:
         return
     already_scheduled = True
 
+    # --- ВОТ ТУТ ВАЖНАЯ ЗАДЕРЖКА ---
     print("Waiting 4 seconds before sending packet...")
-    time.sleep(4)   # задержка 4 секунды, чтобы приложение всё успело
+    time.sleep(4)   # ← задержка 4 сек, можно изменить на 3 при желании
 
     if connected and conn_handle is not None:
         hr = 72
@@ -145,21 +131,19 @@ def _scheduled_send(_):
         send_hr_spo2_once(hr, spo2)
         print(f"Sent 1 packet → HR={hr}, SpO2={spo2}")
     else:
-        print("No connection at send time, skip")
+        print("No connection, skip send")
 
-    # После пакета → аккуратно дисконнектимся
     try:
         if conn_handle is not None:
             print("Disconnecting...")
             ble.gap_disconnect(conn_handle)
             time.sleep_ms(200)
-    except OSError as e:
-        print("gap_disconnect error:", e)
+    except:
+        pass
 
-    # Выключаем BLE и уходим в сон (только после УСПЕШНОГО цикла!)
     try:
         ble.active(False)
-    except OSError:
+    except:
         pass
 
     print("Deep sleep", SLEEP_BETWEEN_MEAS_MS, "ms")
@@ -167,23 +151,19 @@ def _scheduled_send(_):
 
 
 def send_hr_spo2_once(hr, spo2):
-    """Отправка одного HRS + одного PLX-пакета."""
     global conn_handle, connected, hrs_value_handle, pox_value_handle
 
     if not connected or conn_handle is None:
         return
 
-    # Heart Rate Measurement 0x2A37: [flags][HR]
     hr_flags = 0x00
     hrs_payload = struct.pack("<BB", hr_flags, hr)
 
     try:
         ble.gatts_notify(conn_handle, hrs_value_handle, hrs_payload)
-        print("HRS payload:", list(hrs_payload))
     except OSError as e:
         print("HRS notify error:", e)
 
-    # PLX Continuous Measurement 0x2A5F: [flags][SpO2 SFLOAT][PR SFLOAT]
     plx_flags = 0x00
     spo2_sfloat = encode_sfloat(spo2)
     pr_sfloat = encode_sfloat(hr)
@@ -191,44 +171,15 @@ def send_hr_spo2_once(hr, spo2):
 
     try:
         ble.gatts_notify(conn_handle, pox_value_handle, pox_payload)
-        print("PLX payload:", list(pox_payload))
     except OSError as e:
         print("PLX notify error:", e)
 
 
 def main():
-    global adv_start_ms, adv_running, halted
-
     print("Boot, init BLE...")
     init_ble()
 
     while True:
-        if halted:
-            # Всё выключено, просто живём на минимальном коде до ресета
-            time.sleep_ms(1000)
-            continue
-
-        # Таймаут ожидания подключения: 60 секунд
-        if adv_running and (not connected) and adv_start_ms is not None:
-            elapsed = time.ticks_diff(time.ticks_ms(), adv_start_ms)
-            if elapsed > CONN_TIMEOUT_MS:
-                print("No connection within 60s → stop advertising & turn off BLE")
-
-                # Остановить рекламу и выключить BLE
-                try:
-                    ble.gap_advertise(None)
-                except OSError:
-                    pass
-
-                try:
-                    ble.active(False)
-                except OSError:
-                    pass
-
-                adv_running = False
-                adv_start_ms = None
-                halted = True    # ← теперь устройство "мёртвое" до аппаратного ресета
-
         time.sleep_ms(200)
 
 
